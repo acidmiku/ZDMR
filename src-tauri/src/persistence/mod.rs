@@ -540,6 +540,12 @@ impl Db {
       theme: self
         .get_setting_raw("theme")?
         .unwrap_or_else(|| "dark".to_string()),
+      skin: self
+        .get_setting_raw("skin")?
+        .unwrap_or_else(|| "modern".to_string()),
+      global_hotkey: self
+        .get_setting_raw("global_hotkey")?
+        .unwrap_or_else(|| "Ctrl+Shift+X".to_string()),
       global_proxy_enabled: self
         .get_setting_raw("global_proxy_enabled")?
         .map(|s| s == "1")
@@ -562,6 +568,8 @@ impl Db {
     )?;
     self.set_setting_raw("minimize_to_tray", if s.minimize_to_tray { "1" } else { "0" })?;
     self.set_setting_raw("theme", &s.theme)?;
+    self.set_setting_raw("skin", &s.skin)?;
+    self.set_setting_raw("global_hotkey", &s.global_hotkey)?;
     self.set_setting_raw("global_proxy_enabled", if s.global_proxy_enabled { "1" } else { "0" })?;
     self.set_setting_raw("global_proxy_url", s.global_proxy_url.as_deref().unwrap_or(""))?;
     self.set_setting_raw("local_api_port", &s.local_api_port.to_string())?;
@@ -827,6 +835,12 @@ impl SettingsStore {
     }
     if snap.theme.trim().is_empty() {
       snap.theme = "dark".to_string();
+    }
+    if snap.skin.trim().is_empty() {
+      snap.skin = "modern".to_string();
+    }
+    if snap.global_hotkey.trim().is_empty() {
+      snap.global_hotkey = "Ctrl+Shift+X".to_string();
     }
     if snap.local_api_port <= 0 {
       snap.local_api_port = 17777;

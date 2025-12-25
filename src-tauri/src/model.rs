@@ -55,6 +55,8 @@ pub struct SettingsSnapshot {
   pub bandwidth_limit_bps: Option<i64>,
   pub minimize_to_tray: bool,
   pub theme: String,
+  pub skin: String,
+  pub global_hotkey: String,
   pub global_proxy_enabled: bool,
   pub global_proxy_url: Option<String>,
   pub local_api_port: i64,

@@ -16,6 +16,7 @@ pub fn run() {
   let mut builder = tauri::Builder::default();
 
   builder = builder.plugin(tauri_plugin_shell::init());
+  builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
   builder
     .setup(|app| -> Result<(), Box<dyn std::error::Error>> {
@@ -50,6 +51,16 @@ pub fn run() {
 
       // Tray
       ui_bridge::init_tray(app.handle())?;
+
+      // Global hotkey (toggle show/hide). Best-effort; if parsing/register fails, app still runs.
+      if let Ok(snap) = app.state::<AppState>().settings.get_snapshot() {
+        if !snap.global_hotkey.trim().is_empty() {
+          let gs = app.state::<tauri_plugin_global_shortcut::GlobalShortcut<tauri::Wry>>();
+          let _ = gs.on_shortcut(snap.global_hotkey.as_str(), |app, _shortcut, _event| {
+            let _ = crate::ui_bridge::toggle_main_window(app);
+          });
+        }
+      }
 
       Ok(())
     })
@@ -93,6 +104,7 @@ pub fn run() {
       ui_bridge::cmd_install_update,
       ui_bridge::cmd_open_logs_folder,
       ui_bridge::cmd_open_download_folder,
+      ui_bridge::cmd_toggle_main_window,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

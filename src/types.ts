@@ -57,6 +57,8 @@ export interface SettingsSnapshot {
   bandwidth_limit_bps: number | null
   minimize_to_tray: boolean
   theme: 'dark' | 'mirage' | 'light'
+  skin: 'modern' | 'aero' | 'festive' | 'nyan'
+  global_hotkey: string
   global_proxy_enabled: boolean
   global_proxy_url: string | null
   local_api_port: number

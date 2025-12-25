@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import './App.css'
+import nyanCatUrl from './assets/nyan_cat.png'
 import type { AddDownloadsRequest, DownloadProgressUpdate, DownloadRecord, NewBatchRequest, RulesSnapshot, SettingsSnapshot, UpdateCheckResult } from './types'
 
 const EVENT_PROGRESS_BATCH = 'zdmr://progress_batch'
@@ -192,6 +193,13 @@ export default function App() {
     document.documentElement.dataset.theme = theme
   }, [settings?.theme])
 
+  useEffect(() => {
+    const skin = settings?.skin ?? 'modern'
+    document.documentElement.dataset.skin = skin
+  }, [settings?.skin])
+
+  const skin = settings?.skin ?? 'modern'
+
   const rows = useMemo(() => {
     return downloads.map((d) => {
       const p = progressById[d.id]
@@ -245,6 +253,7 @@ export default function App() {
             const speed = p?.speed_bps ?? 0
             const eta = p?.eta_seconds ?? null
             const err = p?.error_message ?? d.error_message
+            const pct100 = Math.max(0, Math.min(100, pct * 100))
             return (
               <div
                 key={d.id}
@@ -265,7 +274,16 @@ export default function App() {
                 </div>
                 <div className="rowMid">
                   <div className="progressBar">
-                    <div className="progressFill" style={{ width: `${pct * 100}%` }} />
+                    <div className="progressFill" style={{ width: `${pct100}%` }} />
+                    {skin === 'nyan' ? (
+                      <img
+                        className="nyanCat"
+                        src={nyanCatUrl}
+                        alt=""
+                        draggable={false}
+                        style={{ left: `calc(${pct100}% - 14px)` }}
+                      />
+                    ) : null}
                   </div>
                 </div>
                 <div className="rowBot">
@@ -337,6 +355,8 @@ export default function App() {
           }}
         />
       )}
+
+      {skin === 'festive' ? <Snowfall /> : null}
     </div>
   )
 }
@@ -527,6 +547,30 @@ function SettingsModal(props: {
               <option value="mirage">Mirage</option>
               <option value="light">Light</option>
             </select>
+          </label>
+
+          <label className="field">
+            <div className="label">Skin</div>
+            <select
+              value={s.skin}
+              onChange={(e) => setS({ ...s, skin: e.target.value as SettingsSnapshot['skin'] })}
+            >
+              <option value="modern">Modern</option>
+              <option value="aero">Aero (glassy)</option>
+              <option value="festive">Festive (Christmas)</option>
+              <option value="nyan">Nyan</option>
+            </select>
+            <div className="hint">Skins change styling only (theme still controls base colors).</div>
+          </label>
+
+          <label className="field">
+            <div className="label">Global hotkey (toggle show/hide)</div>
+            <input
+              placeholder="Ctrl+Shift+X"
+              value={s.global_hotkey}
+              onChange={(e) => setS({ ...s, global_hotkey: e.target.value })}
+            />
+            <div className="hint">Example: Ctrl+Shift+X. Leave as-is if you’re unsure.</div>
           </label>
 
           <div className="field">
@@ -828,6 +872,37 @@ function SettingsModal(props: {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function Snowfall() {
+  const flakes = Array.from({ length: 18 }, (_, i) => {
+    const left = (i * 61) % 100
+    const duration = 7 + (i % 7) * 1.1
+    const delay = -((i % 9) * 0.8)
+    const size = 12 + (i % 6) * 3
+    const opacity = 0.25 + ((i % 5) * 0.12)
+    return { i, left, duration, delay, size, opacity }
+  })
+
+  return (
+    <div className="snowOverlay" aria-hidden="true">
+      {flakes.map((f) => (
+        <span
+          key={f.i}
+          className="snowflake"
+          style={{
+            left: `${f.left}%`,
+            animationDuration: `${f.duration}s`,
+            animationDelay: `${f.delay}s`,
+            fontSize: `${f.size}px`,
+            opacity: f.opacity,
+          }}
+        >
+          ❄
+        </span>
+      ))}
     </div>
   )
 }

@@ -135,10 +135,25 @@
   border-radius: 999px;
   background: color-mix(in oklab, var(--text), transparent 92%);
   overflow: hidden;
+  position: relative;
 }
 .progressFill {
   height: 100%;
   background: var(--accent);
+  border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+}
+
+.nyanCat {
+  position: absolute;
+  top: -14px;
+  height: 22px;
+  width: auto;
+  image-rendering: auto;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
 }
 
 .rowBot {
@@ -165,6 +180,135 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
+}
+
+/* -------------------------
+   Skins (styling-only)
+   ------------------------- */
+
+/* Aero: glass + blur, softer borders, no button outlines */
+[data-skin='aero'] .topbar,
+[data-skin='aero'] .statusbar {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(1.25);
+}
+
+[data-skin='aero'] .row,
+[data-skin='aero'] .modal,
+[data-skin='aero'] .ctx {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+[data-skin='aero'] .modalBackdrop {
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px) saturate(1.2);
+}
+
+[data-skin='aero'] .btn,
+[data-skin='aero'] .iconBtn {
+  border: 0;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 6px 22px rgba(0, 0, 0, 0.22);
+}
+
+[data-skin='aero'] input,
+[data-skin='aero'] textarea,
+[data-skin='aero'] select {
+  border: 0;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* Festive: greenish cozy accent + candy-cane progress */
+[data-skin='festive'] {
+  --accent: color-mix(in oklab, #24c06a, var(--accent) 25%);
+  --accent2: color-mix(in oklab, rgba(36, 192, 106, 0.22), var(--accent2) 35%);
+}
+
+[data-skin='festive'] .progressFill {
+  background: repeating-linear-gradient(
+    45deg,
+    #ff3b3b 0px,
+    #ff3b3b 7px,
+    #ffffff 7px,
+    #ffffff 14px
+  );
+}
+
+/* Nyan: rainbow animated progress */
+[data-skin='nyan'] .progressFill {
+  background: linear-gradient(
+    90deg,
+    #ff004c,
+    #ff7a00,
+    #ffd500,
+    #2bff6a,
+    #00d2ff,
+    #7a00ff,
+    #ff004c
+  );
+  background-size: 220% 100%;
+  animation: nyanRainbow 1.6s linear infinite;
+}
+
+[data-skin='nyan'] .progressFill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 10% 50%, rgba(255, 255, 255, 0.7) 0 1px, transparent 2px),
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55) 0 1px, transparent 2px),
+    radial-gradient(circle at 60% 70%, rgba(255, 255, 255, 0.6) 0 1px, transparent 2px),
+    radial-gradient(circle at 85% 45%, rgba(255, 255, 255, 0.5) 0 1px, transparent 2px);
+  opacity: 0.35;
+  mix-blend-mode: screen;
+  animation: nyanSparks 0.9s linear infinite;
+}
+
+@keyframes nyanRainbow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes nyanSparks {
+  0% {
+    transform: translateX(-30%);
+  }
+  100% {
+    transform: translateX(30%);
+  }
+}
+
+/* Snow overlay for festive skin */
+.snowOverlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 50;
+}
+
+.snowflake {
+  position: absolute;
+  top: -10%;
+  animation-name: snowFall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+}
+
+@keyframes snowFall {
+  0% {
+    transform: translateY(-20vh) translateX(0);
+  }
+  100% {
+    transform: translateY(120vh) translateX(30px);
+  }
 }
 
 .modal {

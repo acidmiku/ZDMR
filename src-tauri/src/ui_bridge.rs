@@ -253,6 +253,29 @@ pub async fn cmd_install_update(app: AppHandle, installer_url: String) -> Result
   Ok(())
 }
 
+pub fn toggle_main_window(app: &AppHandle) -> Result<(), String> {
+  let w = app
+    .get_webview_window("main")
+    .ok_or_else(|| "main window not found".to_string())?;
+
+  let visible = w.is_visible().unwrap_or(true);
+  if visible {
+    w.hide().map_err(|e| e.to_string())?;
+    return Ok(());
+  }
+
+  // Bring to foreground.
+  w.show().map_err(|e| e.to_string())?;
+  let _ = w.unminimize();
+  let _ = w.set_focus();
+  Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_toggle_main_window(app: AppHandle) -> Result<(), String> {
+  toggle_main_window(&app)
+}
+
 #[tauri::command]
 pub async fn cmd_pause_download(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
   state
@@ -313,7 +336,8 @@ pub fn cmd_get_settings(state: tauri::State<AppState>) -> Result<SettingsSnapsho
 }
 
 #[tauri::command]
-pub async fn cmd_set_settings(state: tauri::State<'_, AppState>, s: SettingsSnapshot) -> Result<(), String> {
+pub async fn cmd_set_settings(app: AppHandle, state: tauri::State<'_, AppState>, s: SettingsSnapshot) -> Result<(), String> {
+  let prev = state.settings.get_snapshot().map_err(|e| e.to_string())?;
   state.settings.set_snapshot(&s).map_err(|e| e.to_string())?;
   state
     .engine
@@ -322,6 +346,20 @@ pub async fn cmd_set_settings(state: tauri::State<'_, AppState>, s: SettingsSnap
     })
     .await
     .map_err(|e| e.to_string())?;
+
+  // Update global hotkey registration (best-effort).
+  if prev.global_hotkey.trim() != s.global_hotkey.trim() {
+    let gs = app.state::<tauri_plugin_global_shortcut::GlobalShortcut<tauri::Wry>>();
+    if !prev.global_hotkey.trim().is_empty() {
+      let _ = gs.unregister(prev.global_hotkey.as_str());
+    }
+    if !s.global_hotkey.trim().is_empty() {
+      let _ = gs.on_shortcut(s.global_hotkey.as_str(), |app, _shortcut, _event| {
+        let _ = crate::ui_bridge::toggle_main_window(app);
+      });
+    }
+  }
+
   Ok(())
 }
 
