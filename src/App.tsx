@@ -255,8 +255,8 @@ export default function App() {
                   </div>
                   {status === 'COMPLETED' ? (
                     <>
-                      <div className="meta">{tookText(d)}</div>
                       <div className="meta" />
+                      <div className="meta right">{tookText(d)}</div>
                     </>
                   ) : (
                     <>

@@ -120,6 +120,9 @@
 .meta {
   white-space: nowrap;
 }
+.meta.right {
+  text-align: right;
+}
 
 .modalBackdrop {
   position: fixed;
