@@ -233,6 +233,11 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 6px 22px rgba(0, 0, 0, 0.22);
 }
 
+[data-skin='aero'] .clearBtn {
+  box-shadow: none !important;
+  background: transparent;
+}
+
 [data-skin='aero'] input,
 [data-skin='aero'] textarea,
 [data-skin='aero'] select {
@@ -421,12 +426,13 @@ textarea {
 .clearBtn {
   border: 0;
   outline: none;
-  box-shadow: none;
+  box-shadow: none !important;
+  background: transparent;
 }
 .clearBtn:focus,
 .clearBtn:focus-visible {
   outline: none;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
 .grid2 {
