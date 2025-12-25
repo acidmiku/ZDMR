@@ -316,7 +316,7 @@ export default function App() {
         <div className="statusItem">{formatStatusbarSpeed(statusSummary.totalBps)}</div>
         <div className="spacer" />
         <button
-          className="btn"
+          className="btn clearBtn"
           onClick={async () => {
             await invoke('cmd_clear_completed_downloads')
             await refreshDownloads()

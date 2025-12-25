@@ -418,6 +418,17 @@ textarea {
   background: color-mix(in oklab, var(--panel2), var(--text) 6%);
 }
 
+.clearBtn {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+.clearBtn:focus,
+.clearBtn:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
