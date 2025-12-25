@@ -1,3 +1,8 @@
+## v0.1.3 (2025-12-25)
+
+### Fixed
+- Windows in-app updater: avoid `os error 32` (“file is being used by another process”) by closing the downloaded installer before launch, using a unique temp filename, and retrying on transient sharing violations.
+
 ## v0.1.2 (2025-12-25)
 
 ### Fixed

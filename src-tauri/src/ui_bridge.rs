@@ -9,6 +9,7 @@ use tauri_plugin_shell::ShellExt;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
@@ -28,6 +29,41 @@ struct GhRelease {
 struct GhAsset {
   name: String,
   browser_download_url: String,
+}
+
+async fn spawn_installer_with_retry(installer_path: &std::path::Path) -> Result<(), String> {
+  // Windows can transiently lock freshly-written executables/MSIs (e.g. AV scanning),
+  // returning ERROR_SHARING_VIOLATION (os error 32). Retry a few times.
+  let ext = installer_path
+    .extension()
+    .and_then(|s| s.to_str())
+    .unwrap_or("")
+    .to_ascii_lowercase();
+
+  for attempt in 0..10 {
+    let spawn_res = if ext == "msi" {
+      std::process::Command::new("msiexec")
+        .args(["/i", installer_path.to_string_lossy().as_ref()])
+        .spawn()
+        .map(|_| ())
+    } else {
+      std::process::Command::new(installer_path).spawn().map(|_| ())
+    };
+
+    match spawn_res {
+      Ok(()) => return Ok(()),
+      Err(e) => {
+        let sharing_violation = e.raw_os_error() == Some(32);
+        if sharing_violation && attempt < 9 {
+          tokio::time::sleep(std::time::Duration::from_millis(200 + attempt * 150)).await;
+          continue;
+        }
+        return Err(e.to_string());
+      }
+    }
+  }
+
+  Err("failed to launch installer".to_string())
 }
 
 #[tauri::command]
@@ -186,9 +222,16 @@ pub async fn cmd_install_update(app: AppHandle, installer_url: String) -> Result
     .unwrap_or("zdmr-installer.exe");
 
   let mut path: PathBuf = std::env::temp_dir();
-  path.push(filename);
+  // Always use a unique temp filename to avoid collisions/locks with a previous attempt.
+  let ext = std::path::Path::new(filename).extension().and_then(|s| s.to_str()).unwrap_or("exe");
+  path.push(format!("zdmr-update-{}.{}", Uuid::new_v4(), ext));
 
-  let mut file = tokio::fs::File::create(&path).await.map_err(|e| e.to_string())?;
+  let mut file = tokio::fs::OpenOptions::new()
+    .create_new(true)
+    .write(true)
+    .open(&path)
+    .await
+    .map_err(|e| e.to_string())?;
   let mut stream = resp.bytes_stream();
   while let Some(chunk) = stream.next().await {
     let chunk = chunk.map_err(|e| e.to_string())?;
@@ -199,21 +242,11 @@ pub async fn cmd_install_update(app: AppHandle, installer_url: String) -> Result
   tokio::io::AsyncWriteExt::flush(&mut file)
     .await
     .map_err(|e| e.to_string())?;
+  file.sync_all().await.map_err(|e| e.to_string())?;
+  drop(file); // critical on Windows: ensure the file handle is closed before launching
 
-  // Launch installer
-  let p = path.clone();
-  let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-
-  if ext == "msi" {
-    std::process::Command::new("msiexec")
-      .args(["/i", p.to_string_lossy().as_ref()])
-      .spawn()
-      .map_err(|e| e.to_string())?;
-  } else {
-    std::process::Command::new(&p)
-      .spawn()
-      .map_err(|e| e.to_string())?;
-  }
+  // Launch installer (with retry for Windows sharing violations)
+  spawn_installer_with_retry(&path).await?;
 
   // Exit so installer can replace files.
   app.exit(0);
