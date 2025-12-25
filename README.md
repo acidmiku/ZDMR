@@ -6,6 +6,12 @@ Z-DMR is a fast, minimal, dark-themed desktop download manager built with:
 - **Tauri**: desktop shell, IPC, tray
 - **React**: UI (near real-time progress updates)
 
+## Features (high level)
+
+- **Skins** (separate from Theme): Modern, Aero (glassy), Festive (snow + candy progress), Nyan (rainbow progress + cat).
+- **Configurable global hotkey** (default `Ctrl+Shift+X`) to toggle show/hide (tray).
+- **Smart naming** (Content-Disposition / URL), resume, multipart downloads, bandwidth limit.
+
 ## Dev
 
 ### Prereqs

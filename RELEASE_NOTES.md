@@ -1,3 +1,15 @@
+## v0.1.4 (2025-12-25)
+
+### Added
+- **Skins selector** (independent from Theme): Modern, Aero (glassy), Festive (snow + candy progress), Nyan (rainbow progress + cat).
+- **Configurable global hotkey** (default `Ctrl+Shift+X`) to toggle show/hide (tray).
+
+### Fixed
+- Global hotkey no longer double-toggles (now triggers only on key press).
+- Aero skin now styles the main window consistently (not just modals).
+- Nyan cat positioning/size on progress bar.
+- Clear completed (🗑️) button: remove outline/ring in Aero.
+
 ## v0.1.3 (2025-12-25)
 
 ### Fixed
