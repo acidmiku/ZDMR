@@ -259,7 +259,11 @@ pub fn toggle_main_window(app: &AppHandle) -> Result<(), String> {
     .ok_or_else(|| "main window not found".to_string())?;
 
   let visible = w.is_visible().unwrap_or(true);
-  if visible {
+  let minimized = w.is_minimized().unwrap_or(false);
+
+  // If the window is currently visible and not minimized, hide it.
+  // If it's hidden OR minimized, show+focus it.
+  if visible && !minimized {
     w.hide().map_err(|e| e.to_string())?;
     return Ok(());
   }
@@ -354,8 +358,10 @@ pub async fn cmd_set_settings(app: AppHandle, state: tauri::State<'_, AppState>,
       let _ = gs.unregister(prev.global_hotkey.as_str());
     }
     if !s.global_hotkey.trim().is_empty() {
-      let _ = gs.on_shortcut(s.global_hotkey.as_str(), |app, _shortcut, _event| {
-        let _ = crate::ui_bridge::toggle_main_window(app);
+      let _ = gs.on_shortcut(s.global_hotkey.as_str(), |app, _shortcut, event| {
+        if matches!(event.state, tauri_plugin_global_shortcut::ShortcutState::Pressed) {
+          let _ = crate::ui_bridge::toggle_main_window(app);
+        }
       });
     }
   }

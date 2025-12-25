@@ -275,16 +275,16 @@ export default function App() {
                 <div className="rowMid">
                   <div className="progressBar">
                     <div className="progressFill" style={{ width: `${pct100}%` }} />
-                    {skin === 'nyan' ? (
-                      <img
-                        className="nyanCat"
-                        src={nyanCatUrl}
-                        alt=""
-                        draggable={false}
-                        style={{ left: `calc(${pct100}% - 14px)` }}
-                      />
-                    ) : null}
                   </div>
+                  {skin === 'nyan' ? (
+                    <img
+                      className="nyanCat"
+                      src={nyanCatUrl}
+                      alt=""
+                      draggable={false}
+                      style={{ left: `calc(${pct100}% - 14px)` }}
+                    />
+                  ) : null}
                 </div>
                 <div className="rowBot">
                   <div className="meta">

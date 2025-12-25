@@ -56,8 +56,10 @@ pub fn run() {
       if let Ok(snap) = app.state::<AppState>().settings.get_snapshot() {
         if !snap.global_hotkey.trim().is_empty() {
           let gs = app.state::<tauri_plugin_global_shortcut::GlobalShortcut<tauri::Wry>>();
-          let _ = gs.on_shortcut(snap.global_hotkey.as_str(), |app, _shortcut, _event| {
-            let _ = crate::ui_bridge::toggle_main_window(app);
+          let _ = gs.on_shortcut(snap.global_hotkey.as_str(), |app, _shortcut, event| {
+            if matches!(event.state, tauri_plugin_global_shortcut::ShortcutState::Pressed) {
+              let _ = crate::ui_bridge::toggle_main_window(app);
+            }
           });
         }
       }
