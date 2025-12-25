@@ -45,10 +45,30 @@ fn parse_content_disposition_filename(cd: &str) -> Option<String> {
   // - filename*=UTF-8''a%20b.txt
   let cd = cd.trim();
 
+  fn take_param_value(s: &str) -> &str {
+    // Extract the parameter value up to the next ';' (unless that ';' occurs inside quotes).
+    // This avoids accidentally consuming subsequent parameters like `; filename=...`.
+    let mut in_quotes = false;
+    let mut escape = false;
+    for (i, ch) in s.char_indices() {
+      if escape {
+        escape = false;
+        continue;
+      }
+      match ch {
+        '\\' if in_quotes => escape = true,
+        '"' => in_quotes = !in_quotes,
+        ';' if !in_quotes => return s[..i].trim(),
+        _ => {}
+      }
+    }
+    s.trim()
+  }
+
   // filename*=
   if let Some(idx) = cd.to_ascii_lowercase().find("filename*=") {
     let rest = &cd[idx + "filename*=".len()..];
-    let rest = rest.trim().trim_matches(';').trim();
+    let rest = take_param_value(rest.trim_start());
     // Often: UTF-8''... (RFC 5987)
     if let Some(pos) = rest.find("''") {
       let enc_value = &rest[pos + 2..];
@@ -88,6 +108,32 @@ fn decode_filename_like(s: &str) -> String {
   match urlencoding::decode(s) {
     Ok(v) => v.into_owned(),
     Err(_) => s.replace("%20", " "),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn content_disposition_filename_star_does_not_consume_following_params() {
+    let cd = "attachment; filename*=UTF-8''Qwen3-4B-Q5_K_M.gguf; filename=Qwen3-4B-Q5_K_M.gguf";
+    let got = parse_content_disposition_filename(cd).unwrap();
+    assert_eq!(got, "Qwen3-4B-Q5_K_M.gguf");
+  }
+
+  #[test]
+  fn content_disposition_filename_basic() {
+    let cd = r#"attachment; filename="Qwen3-4B-Q5_K_M.gguf""#;
+    let got = parse_content_disposition_filename(cd).unwrap();
+    assert_eq!(got, "Qwen3-4B-Q5_K_M.gguf");
+  }
+
+  #[test]
+  fn content_disposition_filename_star_percent_decodes() {
+    let cd = "attachment; filename*=UTF-8''a%20b.txt; filename=a b.txt";
+    let got = parse_content_disposition_filename(cd).unwrap();
+    assert_eq!(got, "a b.txt");
   }
 }
 

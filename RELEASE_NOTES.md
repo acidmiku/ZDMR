@@ -1,3 +1,8 @@
+## v0.1.2 (2025-12-25)
+
+### Fixed
+- Correct filename parsing when servers send `Content-Disposition` with both `filename*=` and `filename=` (prevents names like `foo.gguf; filename=foo.gguf`).
+
 ## v0.1.1 (2025-12-25)
 
 ### Added
