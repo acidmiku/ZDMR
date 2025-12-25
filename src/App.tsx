@@ -89,6 +89,8 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
+  const modalOpenRef = useRef(false)
+  modalOpenRef.current = settingsOpen || batchOpen
 
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
   const [rules, setRules] = useState<RulesSnapshot | null>(null)
@@ -136,6 +138,15 @@ export default function App() {
 
     // Ctrl+V / paste-to-add while focused: silently add downloads using defaults.
     const onPaste = (ev: ClipboardEvent) => {
+      // Do not hijack paste in modals / input fields.
+      if (modalOpenRef.current) return
+      const t = ev.target as HTMLElement | null
+      if (t) {
+        const tag = t.tagName?.toLowerCase()
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+        if (t.isContentEditable) return
+        if (t.closest?.('input,textarea,select,[contenteditable="true"]')) return
+      }
       const text = ev.clipboardData?.getData('text') ?? ''
       const urls = parseUrlsFromText(text)
       if (urls.length === 0) return
