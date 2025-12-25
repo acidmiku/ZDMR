@@ -149,13 +149,14 @@
 
 .nyanCat {
   position: absolute;
-  top: -18px;
-  height: 22px;
+  top: -56px;
+  height: 66px;
   width: auto;
   image-rendering: auto;
   pointer-events: none;
   user-select: none;
   z-index: 5;
+  transform: translateX(-50%);
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
 }
 

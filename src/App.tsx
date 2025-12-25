@@ -282,7 +282,7 @@ export default function App() {
                       src={nyanCatUrl}
                       alt=""
                       draggable={false}
-                      style={{ left: `calc(${pct100}% - 14px)` }}
+                      style={{ left: `${pct100}%` }}
                     />
                   ) : null}
                 </div>
