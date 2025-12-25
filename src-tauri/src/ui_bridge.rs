@@ -6,6 +6,29 @@ use crate::{
 };
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::ShellExt;
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCheckResult {
+  pub current_version: String,
+  pub latest_version: Option<String>,
+  pub update_available: bool,
+  pub installer_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GhRelease {
+  tag_name: String,
+  assets: Vec<GhAsset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GhAsset {
+  name: String,
+  browser_download_url: String,
+}
 
 #[tauri::command]
 pub fn cmd_list_downloads(state: tauri::State<AppState>) -> Result<Vec<crate::model::DownloadRecord>, String> {
@@ -28,6 +51,8 @@ pub async fn cmd_add_downloads(state: tauri::State<'_, AppState>, req: AddDownlo
       urls: req.urls,
       dest_dir,
       batch_id: None,
+      forced_proxy: false,
+      forced_proxy_url: None,
     })
     .await
     .map_err(|e| e.to_string())
@@ -35,6 +60,19 @@ pub async fn cmd_add_downloads(state: tauri::State<'_, AppState>, req: AddDownlo
 
 #[tauri::command]
 pub async fn cmd_add_batch(state: tauri::State<'_, AppState>, req: NewBatchRequest) -> Result<String, String> {
+  let force_proxy = req.download_through_proxy.unwrap_or(false);
+  let forced_proxy_url = if force_proxy {
+    let s = state.settings.get_snapshot().map_err(|e| e.to_string())?;
+    let url = s
+      .global_proxy_url
+      .clone()
+      .filter(|v| !v.trim().is_empty())
+      .ok_or_else(|| "Proxy address is empty. Set it in Settings first.".to_string())?;
+    Some(url)
+  } else {
+    None
+  };
+
   let batch_id = state
     .db
     .insert_batch(&req.dest_dir, req.name.as_deref(), req.raw_url_list.as_deref())
@@ -45,10 +83,141 @@ pub async fn cmd_add_batch(state: tauri::State<'_, AppState>, req: NewBatchReque
       urls: req.urls,
       dest_dir: req.dest_dir,
       batch_id: Some(batch_id.clone()),
+      forced_proxy: force_proxy,
+      forced_proxy_url,
     })
     .await
     .map_err(|e| e.to_string())?;
   Ok(batch_id)
+}
+
+#[tauri::command]
+pub fn cmd_clear_completed_downloads(state: tauri::State<AppState>) -> Result<i64, String> {
+  state
+    .db
+    .delete_completed_downloads()
+    .map(|n| n as i64)
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_check_for_updates(app: AppHandle) -> Result<UpdateCheckResult, String> {
+  let current_version = app.package_info().version.to_string();
+
+  let client = reqwest::Client::builder()
+    .user_agent("Z-DMR")
+    .build()
+    .map_err(|e| e.to_string())?;
+
+  let resp = client
+    .get("https://api.github.com/repos/acidmiku/ZDMR/releases/latest")
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !resp.status().is_success() {
+    return Err(format!("Update check failed: HTTP {}", resp.status().as_u16()));
+  }
+
+  let release: GhRelease = resp.json().await.map_err(|e| e.to_string())?;
+
+  let latest_tag = release.tag_name;
+  let latest_version = latest_tag.trim_start_matches('v').to_string();
+
+  let current_v = semver::Version::parse(current_version.trim_start_matches('v'))
+    .map_err(|_| format!("Cannot parse current version: {}", current_version))?;
+  let latest_v = semver::Version::parse(latest_version.trim_start_matches('v'))
+    .map_err(|_| format!("Cannot parse latest version: {}", latest_version))?;
+
+  let update_available = latest_v > current_v;
+
+  let installer_url = if update_available {
+    pick_windows_installer_url(&release.assets)
+  } else {
+    None
+  };
+
+  Ok(UpdateCheckResult {
+    current_version,
+    latest_version: Some(latest_version),
+    update_available,
+    installer_url,
+  })
+}
+
+fn pick_windows_installer_url(assets: &[GhAsset]) -> Option<String> {
+  // Prefer NSIS setup exe, else MSI.
+  for a in assets {
+    let n = a.name.to_ascii_lowercase();
+    if n.ends_with("-setup.exe") || n.ends_with("setup.exe") {
+      return Some(a.browser_download_url.clone());
+    }
+  }
+  for a in assets {
+    let n = a.name.to_ascii_lowercase();
+    if n.ends_with(".msi") {
+      return Some(a.browser_download_url.clone());
+    }
+  }
+  None
+}
+
+#[tauri::command]
+pub async fn cmd_install_update(app: AppHandle, installer_url: String) -> Result<(), String> {
+  let client = reqwest::Client::builder()
+    .user_agent("Z-DMR")
+    .build()
+    .map_err(|e| e.to_string())?;
+
+  let resp = client
+    .get(&installer_url)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !resp.status().is_success() {
+    return Err(format!("Download failed: HTTP {}", resp.status().as_u16()));
+  }
+
+  let filename = installer_url
+    .split('/')
+    .last()
+    .filter(|s| !s.is_empty())
+    .unwrap_or("zdmr-installer.exe");
+
+  let mut path: PathBuf = std::env::temp_dir();
+  path.push(filename);
+
+  let mut file = tokio::fs::File::create(&path).await.map_err(|e| e.to_string())?;
+  let mut stream = resp.bytes_stream();
+  while let Some(chunk) = stream.next().await {
+    let chunk = chunk.map_err(|e| e.to_string())?;
+    tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+      .await
+      .map_err(|e| e.to_string())?;
+  }
+  tokio::io::AsyncWriteExt::flush(&mut file)
+    .await
+    .map_err(|e| e.to_string())?;
+
+  // Launch installer
+  let p = path.clone();
+  let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+
+  if ext == "msi" {
+    std::process::Command::new("msiexec")
+      .args(["/i", p.to_string_lossy().as_ref()])
+      .spawn()
+      .map_err(|e| e.to_string())?;
+  } else {
+    std::process::Command::new(&p)
+      .spawn()
+      .map_err(|e| e.to_string())?;
+  }
+
+  // Exit so installer can replace files.
+  app.exit(0);
+  Ok(())
 }
 
 #[tauri::command]

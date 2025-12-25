@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import './App.css'
-import type { AddDownloadsRequest, DownloadProgressUpdate, DownloadRecord, NewBatchRequest, RulesSnapshot, SettingsSnapshot } from './types'
+import type { AddDownloadsRequest, DownloadProgressUpdate, DownloadRecord, NewBatchRequest, RulesSnapshot, SettingsSnapshot, UpdateCheckResult } from './types'
 
 const EVENT_PROGRESS_BATCH = 'zdmr://progress_batch'
 const EVENT_DOWNLOADS_CHANGED = 'zdmr://downloads_changed'
@@ -39,6 +39,11 @@ function formatBytes(n: number): string {
 function formatSpeed(bps: number): string {
   if (!Number.isFinite(bps) || bps <= 0) return '0 B/s'
   return `${formatBytes(bps)}/s`
+}
+
+function formatStatusbarSpeed(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return '0 B/s'
+  return formatSpeed(bps)
 }
 
 function formatEta(seconds?: number | null): string {
@@ -197,6 +202,18 @@ export default function App() {
     })
   }, [downloads, progressById])
 
+  const statusSummary = useMemo(() => {
+    const counts = { QUEUED: 0, DOWNLOADING: 0, PAUSED: 0, COMPLETED: 0, ERROR: 0 }
+    for (const d of downloads) counts[d.status]++
+    let totalBps = 0
+    for (const d of downloads) {
+      const p = progressById[d.id]
+      if (!p) continue
+      if (p.status === 'DOWNLOADING') totalBps += p.speed_bps
+    }
+    return { counts, totalBps }
+  }, [downloads, progressById])
+
   return (
     <div className="app">
       <div className="topbar">
@@ -240,7 +257,10 @@ export default function App() {
                 }}
               >
                 <div className="rowTop">
-                  <div className="filename">{d.final_filename ?? '(resolving...)'}</div>
+                  <div className="filename">
+                    {d.final_filename ?? '(resolving...)'}
+                    {d.forced_proxy ? <span className="pill">Proxied</span> : null}
+                  </div>
                   <div className="status">{status === 'ERROR' ? err ?? 'Error' : status}</div>
                 </div>
                 <div className="rowMid">
@@ -271,13 +291,33 @@ export default function App() {
         )}
       </div>
 
+      <div className="statusbar">
+        <div className="statusItem">
+          Q {statusSummary.counts.QUEUED} · D {statusSummary.counts.DOWNLOADING} · P {statusSummary.counts.PAUSED} · C {statusSummary.counts.COMPLETED} · E {statusSummary.counts.ERROR}
+        </div>
+        <div className="statusItem">{formatStatusbarSpeed(statusSummary.totalBps)}</div>
+        <div className="spacer" />
+        <button
+          className="btn"
+          onClick={async () => {
+            await invoke('cmd_clear_completed_downloads')
+            await refreshDownloads()
+          }}
+        >
+          🗑️
+        </button>
+      </div>
+
       {batchOpen && settings && (
         <BatchModal
           defaultDir={settings.default_download_dir}
+          canUseProxy={!!settings.global_proxy_url && settings.global_proxy_url.trim().length > 0}
           onClose={() => setBatchOpen(false)}
-          onStart={(urls, destDir) => {
-            const req: NewBatchRequest = { name: null, dest_dir: destDir, raw_url_list: urls.join('\n'), urls }
-            invoke<string>('cmd_add_batch', { req }).catch(() => {})
+          onStart={(urls, destDir, downloadThroughProxy) => {
+            const req: NewBatchRequest = { name: null, dest_dir: destDir, raw_url_list: urls.join('\n'), urls, download_through_proxy: downloadThroughProxy }
+            invoke<string>('cmd_add_batch', { req })
+              .then(() => refreshDownloads())
+              .catch((e) => window.alert(String(e)))
             setBatchOpen(false)
           }}
         />
@@ -385,9 +425,10 @@ function ContextMenu() {
   )
 }
 
-function BatchModal(props: { defaultDir: string; onClose: () => void; onStart: (urls: string[], destDir: string) => void }) {
+function BatchModal(props: { defaultDir: string; canUseProxy: boolean; onClose: () => void; onStart: (urls: string[], destDir: string, downloadThroughProxy: boolean) => void }) {
   const [dest, setDest] = useState(props.defaultDir)
   const [text, setText] = useState('')
+  const [useProxy, setUseProxy] = useState(false)
   return (
     <div className="modalBackdrop" onMouseDown={props.onClose}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -400,6 +441,18 @@ function BatchModal(props: { defaultDir: string; onClose: () => void; onStart: (
           <div className="label">URLs (newline-separated)</div>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} />
         </label>
+        <label className="field">
+          <div className="rowInline">
+            <input
+              type="checkbox"
+              checked={useProxy}
+              disabled={!props.canUseProxy}
+              onChange={(e) => setUseProxy(e.target.checked)}
+            />
+            <span>Download through proxy</span>
+          </div>
+          {!props.canUseProxy && <div className="hint">Set a proxy address in Settings first.</div>}
+        </label>
         <div className="modalActions">
           <button className="btn" onClick={props.onClose}>
             Cancel
@@ -409,7 +462,7 @@ function BatchModal(props: { defaultDir: string; onClose: () => void; onStart: (
             onClick={() => {
               const urls = parseUrlsFromText(text.replace(/\r/g, '\n')).filter((u) => u.includes('://'))
               if (urls.length === 0) return
-              props.onStart(urls, dest)
+              props.onStart(urls, dest, useProxy)
             }}
           >
             Start
@@ -428,6 +481,7 @@ function SettingsModal(props: {
 }) {
   const [s, setS] = useState<SettingsSnapshot>(props.settings)
   const [r, setR] = useState<RulesSnapshot>(props.rules)
+  const [updateBusy, setUpdateBusy] = useState(false)
 
   return (
     <div className="modalBackdrop" onMouseDown={props.onClose}>
@@ -739,6 +793,31 @@ function SettingsModal(props: {
             }}
           >
             Open logs folder
+          </button>
+          <button
+            className="btn"
+            disabled={updateBusy}
+            onClick={async () => {
+              setUpdateBusy(true)
+              try {
+                const res = await invoke<UpdateCheckResult>('cmd_check_for_updates')
+                if (!res.update_available || !res.installer_url) {
+                  window.alert(`No updates available. Current: ${res.current_version}`)
+                  return
+                }
+                const ok = window.confirm(
+                  `New version available: ${res.latest_version}. Install now?\n\n(Current: ${res.current_version})`,
+                )
+                if (!ok) return
+                await invoke('cmd_install_update', { installerUrl: res.installer_url })
+              } catch (e) {
+                window.alert(`Update check failed: ${String(e)}`)
+              } finally {
+                setUpdateBusy(false)
+              }
+            }}
+          >
+            Check for updates
           </button>
           <div className="spacer" />
           <button className="btn" onClick={props.onClose}>

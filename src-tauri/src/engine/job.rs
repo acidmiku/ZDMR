@@ -153,6 +153,16 @@ async fn attempt_download_once(
   let url_parsed = Url::parse(url).context("invalid url")?;
 
   let proxy_url = Transport::effective_proxy_url(&settings.get_snapshot()?, rules, &url_parsed);
+  let forced = rec.forced_proxy;
+  let forced_url = rec
+    .forced_proxy_url
+    .clone()
+    .or_else(|| settings.get_snapshot().ok().and_then(|s| s.global_proxy_url));
+  let proxy_url = if forced {
+    forced_url.filter(|v| !v.trim().is_empty())
+  } else {
+    proxy_url
+  };
   let client = transport.client_for(proxy_url.as_deref())?;
 
   // Record which source URL (and which mirror, if any) we are currently attempting.

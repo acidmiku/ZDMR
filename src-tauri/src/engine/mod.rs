@@ -35,7 +35,7 @@ pub struct DownloadEngine {
 
 #[derive(Debug)]
 pub enum EngineCommand {
-  AddDownloads { urls: Vec<String>, dest_dir: String, batch_id: Option<String> },
+  AddDownloads { urls: Vec<String>, dest_dir: String, batch_id: Option<String>, forced_proxy: bool, forced_proxy_url: Option<String> },
   Pause { id: String },
   Resume { id: String },
   Retry { id: String },
@@ -113,10 +113,10 @@ struct JobEntry {
 
 async fn handle_cmd(inner: Arc<EngineInner>, cmd: EngineCommand) -> anyhow::Result<()> {
   match cmd {
-    EngineCommand::AddDownloads { urls, dest_dir, batch_id } => {
+    EngineCommand::AddDownloads { urls, dest_dir, batch_id, forced_proxy, forced_proxy_url } => {
       for url in urls {
         let id = Uuid::new_v4().to_string();
-        inner.db.insert_download_skeleton(&id, &url, &dest_dir)?;
+        inner.db.insert_download_skeleton(&id, &url, &dest_dir, forced_proxy, forced_proxy_url.as_deref())?;
         if let Some(batch_id) = batch_id.as_deref() {
           inner.db.attach_download_to_batch(&id, batch_id)?;
         }

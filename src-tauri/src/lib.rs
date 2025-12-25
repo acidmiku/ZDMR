@@ -88,6 +88,9 @@ pub fn run() {
       ui_bridge::cmd_upsert_mirror_rule,
       ui_bridge::cmd_delete_mirror_rule,
       ui_bridge::cmd_add_domain_to_proxy_and_retry,
+      ui_bridge::cmd_clear_completed_downloads,
+      ui_bridge::cmd_check_for_updates,
+      ui_bridge::cmd_install_update,
       ui_bridge::cmd_open_logs_folder,
       ui_bridge::cmd_open_download_folder,
     ])

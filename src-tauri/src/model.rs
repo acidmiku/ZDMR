@@ -17,6 +17,8 @@ pub struct DownloadRecord {
   pub updated_at: String,
   pub started_at: Option<String>,
   pub completed_at: Option<String>,
+  pub forced_proxy: bool,
+  pub forced_proxy_url: Option<String>,
   pub original_url: String,
   pub resolved_url: Option<String>,
   pub dest_dir: String,
@@ -96,6 +98,7 @@ pub struct NewBatchRequest {
   pub dest_dir: String,
   pub raw_url_list: Option<String>,
   pub urls: Vec<String>,
+  pub download_through_proxy: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

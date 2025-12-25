@@ -21,6 +21,8 @@ export interface DownloadRecord {
   updated_at: string
   started_at: string | null
   completed_at: string | null
+  forced_proxy: boolean
+  forced_proxy_url: string | null
   original_url: string
   resolved_url: string | null
   dest_dir: string
@@ -98,6 +100,14 @@ export interface NewBatchRequest {
   dest_dir: string
   raw_url_list: string | null
   urls: string[]
+  download_through_proxy?: boolean | null
+}
+
+export interface UpdateCheckResult {
+  current_version: string
+  latest_version: string | null
+  update_available: boolean
+  installer_url: string | null
 }
 
 

@@ -42,6 +42,8 @@ impl Db {
         updated_at TEXT NOT NULL,
         started_at TEXT,
         completed_at TEXT,
+        forced_proxy INTEGER NOT NULL DEFAULT 0,
+        forced_proxy_url TEXT,
         original_url TEXT NOT NULL,
         resolved_url TEXT,
         dest_dir TEXT NOT NULL,
@@ -117,6 +119,8 @@ impl Db {
     // Lightweight migration for existing DBs.
     let _ = conn.execute(r#"ALTER TABLE downloads ADD COLUMN started_at TEXT"#, []);
     let _ = conn.execute(r#"ALTER TABLE downloads ADD COLUMN completed_at TEXT"#, []);
+    let _ = conn.execute(r#"ALTER TABLE downloads ADD COLUMN forced_proxy INTEGER NOT NULL DEFAULT 0"#, []);
+    let _ = conn.execute(r#"ALTER TABLE downloads ADD COLUMN forced_proxy_url TEXT"#, []);
     Ok(())
   }
 
@@ -131,7 +135,8 @@ impl Db {
     let mut stmt = conn.prepare(
       r#"
         SELECT
-          id, created_at, updated_at, started_at, completed_at, original_url, resolved_url, dest_dir, final_filename,
+          id, created_at, updated_at, started_at, completed_at, forced_proxy, forced_proxy_url,
+          original_url, resolved_url, dest_dir, final_filename,
           temp_path, status, error_code, error_message, content_length, etag, last_modified,
           bytes_downloaded, supports_ranges, mirror_used, batch_id
         FROM downloads
@@ -140,32 +145,34 @@ impl Db {
     )?;
 
     let rows = stmt.query_map([], |row| {
-      let status_str: String = row.get(10)?;
+      let status_str: String = row.get(12)?;
       let status = parse_status(&status_str);
-      let error_code: Option<String> = row.get(11)?;
+      let error_code: Option<String> = row.get(13)?;
       Ok(DownloadRecord {
         id: row.get(0)?,
         created_at: row.get(1)?,
         updated_at: row.get(2)?,
         started_at: row.get(3)?,
         completed_at: row.get(4)?,
-        original_url: row.get(5)?,
-        resolved_url: row.get(6)?,
-        dest_dir: row.get(7)?,
-        final_filename: row.get(8)?,
-        temp_path: row.get(9)?,
+        forced_proxy: row.get::<_, i64>(5)? != 0,
+        forced_proxy_url: row.get(6)?,
+        original_url: row.get(7)?,
+        resolved_url: row.get(8)?,
+        dest_dir: row.get(9)?,
+        final_filename: row.get(10)?,
+        temp_path: row.get(11)?,
         status,
         error_code: error_code.and_then(parse_error_code),
-        error_message: row.get(12)?,
-        content_length: row.get(13)?,
-        etag: row.get(14)?,
-        last_modified: row.get(15)?,
-        bytes_downloaded: row.get(16)?,
+        error_message: row.get(14)?,
+        content_length: row.get(15)?,
+        etag: row.get(16)?,
+        last_modified: row.get(17)?,
+        bytes_downloaded: row.get(18)?,
         supports_ranges: row
-          .get::<_, Option<i64>>(17)?
+          .get::<_, Option<i64>>(19)?
           .map(|v| v != 0),
-        mirror_used: row.get(18)?,
-        batch_id: row.get(19)?,
+        mirror_used: row.get(20)?,
+        batch_id: row.get(21)?,
       })
     })?;
 
@@ -182,7 +189,8 @@ impl Db {
       .query_row(
         r#"
           SELECT
-            id, created_at, updated_at, started_at, completed_at, original_url, resolved_url, dest_dir, final_filename,
+            id, created_at, updated_at, started_at, completed_at, forced_proxy, forced_proxy_url,
+            original_url, resolved_url, dest_dir, final_filename,
             temp_path, status, error_code, error_message, content_length, etag, last_modified,
             bytes_downloaded, supports_ranges, mirror_used, batch_id
           FROM downloads
@@ -190,32 +198,34 @@ impl Db {
         "#,
         params![id],
         |row| {
-          let status_str: String = row.get(10)?;
+          let status_str: String = row.get(12)?;
           let status = parse_status(&status_str);
-          let error_code: Option<String> = row.get(11)?;
+          let error_code: Option<String> = row.get(13)?;
           Ok(DownloadRecord {
             id: row.get(0)?,
             created_at: row.get(1)?,
             updated_at: row.get(2)?,
             started_at: row.get(3)?,
             completed_at: row.get(4)?,
-            original_url: row.get(5)?,
-            resolved_url: row.get(6)?,
-            dest_dir: row.get(7)?,
-            final_filename: row.get(8)?,
-            temp_path: row.get(9)?,
+            forced_proxy: row.get::<_, i64>(5)? != 0,
+            forced_proxy_url: row.get(6)?,
+            original_url: row.get(7)?,
+            resolved_url: row.get(8)?,
+            dest_dir: row.get(9)?,
+            final_filename: row.get(10)?,
+            temp_path: row.get(11)?,
             status,
             error_code: error_code.and_then(parse_error_code),
-            error_message: row.get(12)?,
-            content_length: row.get(13)?,
-            etag: row.get(14)?,
-            last_modified: row.get(15)?,
-            bytes_downloaded: row.get(16)?,
+            error_message: row.get(14)?,
+            content_length: row.get(15)?,
+            etag: row.get(16)?,
+            last_modified: row.get(17)?,
+            bytes_downloaded: row.get(18)?,
             supports_ranges: row
-              .get::<_, Option<i64>>(17)?
+              .get::<_, Option<i64>>(19)?
               .map(|v| v != 0),
-            mirror_used: row.get(18)?,
-            batch_id: row.get(19)?,
+            mirror_used: row.get(20)?,
+            batch_id: row.get(21)?,
           })
         },
       )
@@ -234,18 +244,40 @@ impl Db {
     Ok(())
   }
 
-  pub fn insert_download_skeleton(&self, id: &str, original_url: &str, dest_dir: &str) -> anyhow::Result<()> {
+  pub fn insert_download_skeleton(
+    &self,
+    id: &str,
+    original_url: &str,
+    dest_dir: &str,
+    forced_proxy: bool,
+    forced_proxy_url: Option<&str>,
+  ) -> anyhow::Result<()> {
     let now = Self::now_rfc3339();
     let conn = self.conn.lock();
     conn.execute(
       r#"
         INSERT INTO downloads (
-          id, created_at, updated_at, original_url, dest_dir, status, bytes_downloaded
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)
+          id, created_at, updated_at, forced_proxy, forced_proxy_url, original_url, dest_dir, status, bytes_downloaded
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
       "#,
-      params![id, now, now, original_url, dest_dir, "QUEUED"],
+      params![
+        id,
+        now,
+        now,
+        if forced_proxy { 1 } else { 0 },
+        forced_proxy_url,
+        original_url,
+        dest_dir,
+        "QUEUED"
+      ],
     )?;
     Ok(())
+  }
+
+  pub fn delete_completed_downloads(&self) -> anyhow::Result<usize> {
+    let conn = self.conn.lock();
+    let n = conn.execute(r#"DELETE FROM downloads WHERE status='COMPLETED'"#, params![])?;
+    Ok(n)
   }
 
   pub fn update_download_status(

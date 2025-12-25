@@ -94,6 +94,8 @@ async fn post_download(
       urls: req.urls,
       dest_dir,
       batch_id: None,
+      forced_proxy: false,
+      forced_proxy_url: None,
     })
     .await;
   StatusCode::ACCEPTED.into_response()
@@ -120,6 +122,12 @@ async fn post_batch(
       urls: req.urls,
       dest_dir: req.dest_dir,
       batch_id: Some(batch_id),
+      forced_proxy: req.download_through_proxy.unwrap_or(false),
+      forced_proxy_url: st
+        .settings
+        .get_snapshot()
+        .ok()
+        .and_then(|s| s.global_proxy_url),
     })
     .await;
   StatusCode::ACCEPTED.into_response()

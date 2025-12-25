@@ -47,6 +47,25 @@
   padding: 10px;
 }
 
+.statusbar {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border2);
+  background: var(--panel2);
+  overflow: hidden;
+}
+.statusItem {
+  font-size: 12px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.statusbar .btn {
+  padding: 6px 10px;
+}
+
 .empty {
   opacity: 0.7;
   font-size: 13px;
@@ -81,6 +100,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .status {
@@ -91,6 +113,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent), transparent 82%);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 65%);
+  color: color-mix(in oklab, var(--accent), var(--text) 25%);
+  flex: none;
 }
 
 .rowMid {
@@ -174,6 +207,13 @@ textarea {
   color: inherit;
   padding: 8px 10px;
   outline: none;
+}
+
+input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 select {
