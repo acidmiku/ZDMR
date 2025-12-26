@@ -1,6 +1,9 @@
 # Z-DMR — minimal cross-platform download manager (Rust + Tauri + React)
+<img width="128" height="128" alt="zdmr logo-icon" src="https://github.com/user-attachments/assets/f867ce6f-b96a-4fef-85f2-829b0f25e300" />
+
 
 Z-DMR is a fast, minimal, dark-themed desktop download manager built with:
+
 
 - **Rust**: download engine + persistence + local API
 - **Tauri**: desktop shell, IPC, tray
