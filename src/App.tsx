@@ -250,6 +250,7 @@ export default function App() {
         ) : (
           rows.map(({ d, p, bytes, total, pct }) => {
             const status = p?.status ?? d.status
+            const statusDetail = p?.status_detail ?? null
             const speed = p?.speed_bps ?? 0
             const eta = p?.eta_seconds ?? null
             const err = p?.error_message ?? d.error_message
@@ -270,7 +271,13 @@ export default function App() {
                     {d.final_filename ?? '(resolving...)'}
                     {d.forced_proxy ? <span className="pill">Proxied</span> : null}
                   </div>
-                  <div className="status">{status === 'ERROR' ? err ?? 'Error' : status}</div>
+                  <div className="status">
+                    {status === 'ERROR'
+                      ? err ?? 'Error'
+                      : statusDetail
+                        ? statusDetail
+                        : status}
+                  </div>
                 </div>
                 <div className="rowMid">
                   <div className="progressBar">

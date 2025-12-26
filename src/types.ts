@@ -47,6 +47,7 @@ export interface DownloadProgressUpdate {
   content_length: number | null
   speed_bps: number
   eta_seconds: number | null
+  status_detail?: string | null
   error_code: ErrorCode | null
   error_message: string | null
   updated_at: string
