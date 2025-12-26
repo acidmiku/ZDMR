@@ -276,6 +276,21 @@ fn spawn_progress_flusher(inner: Arc<EngineInner>) {
         let status = *item.status.lock();
         let error_code = item.error_code.lock().clone();
         let error_message = item.error_message.lock().clone();
+        let detail_from_job = item.status_detail.lock().clone();
+        let backoff_until_ms = item.backoff_until_ms.load(std::sync::atomic::Ordering::Relaxed);
+        let now_ms = {
+          use std::time::{SystemTime, UNIX_EPOCH};
+          SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+        };
+        let status_detail = if backoff_until_ms > now_ms {
+          let secs = ((backoff_until_ms - now_ms) as f64 / 1000.0).ceil() as i64;
+          Some(format!("Retrying in {secs}s"))
+        } else {
+          detail_from_job
+        };
         batch.push(DownloadProgressUpdate {
           id: item.id.clone(),
           status,
@@ -283,6 +298,7 @@ fn spawn_progress_flusher(inner: Arc<EngineInner>) {
           content_length: total,
           speed_bps: speed,
           eta_seconds: eta,
+          status_detail,
           error_code,
           error_message,
           updated_at: now.clone(),

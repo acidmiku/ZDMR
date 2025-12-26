@@ -35,6 +35,9 @@ pub struct RuntimeStats {
   pub total: Arc<AtomicI64>,
   pub speed_ewma: Arc<parking_lot::Mutex<f64>>,
   pub last_bytes: Arc<AtomicI64>,
+  // unix epoch millis when we are allowed to retry (0 = not backing off)
+  pub backoff_until_ms: Arc<AtomicI64>,
+  pub status_detail: Arc<parking_lot::Mutex<Option<String>>>,
   pub error_code: Arc<parking_lot::Mutex<Option<ErrorCode>>>,
   pub error_message: Arc<parking_lot::Mutex<Option<String>>>,
 }
@@ -48,10 +51,29 @@ impl RuntimeStats {
       total: Arc::new(AtomicI64::new(-1)),
       speed_ewma: Arc::new(parking_lot::Mutex::new(0.0)),
       last_bytes: Arc::new(AtomicI64::new(0)),
+      backoff_until_ms: Arc::new(AtomicI64::new(0)),
+      status_detail: Arc::new(parking_lot::Mutex::new(None)),
       error_code: Arc::new(parking_lot::Mutex::new(None)),
       error_message: Arc::new(parking_lot::Mutex::new(None)),
     }
   }
+}
+
+fn now_unix_ms() -> i64 {
+  use std::time::{SystemTime, UNIX_EPOCH};
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0)
+}
+
+fn compute_backoff_delay_ms(attempt: usize) -> u64 {
+  // 1s, 2s, 4s, ... capped at 60s
+  let base: u64 = 1_000;
+  let max: u64 = 60_000;
+  let factor = 1u64.checked_shl(attempt.min(16) as u32).unwrap_or(u64::MAX);
+  let exp = base.saturating_mul(factor);
+  exp.min(max)
 }
 
 pub async fn run_download_job(
@@ -419,6 +441,11 @@ async fn download_single(
   mut control_rx: watch::Receiver<JobControl>,
   stats: RuntimeStats,
 ) -> anyhow::Result<()> {
+  // If we receive no bytes for this long while "DOWNLOADING", assume a stall (e.g. rate limit)
+  // and retry the request with exponential backoff starting at the last written offset.
+  let stall_timeout = Duration::from_secs(20);
+  let mut stall_attempt: usize = 0;
+
   let mut headers = HeaderMap::new();
   Transport::apply_header_rules(rules, &mut headers, url);
 
@@ -443,58 +470,124 @@ async fn download_single(
     );
   }
 
-  let resp = client.get(url.clone()).headers(headers).send().await;
-  let resp = match resp {
-    Ok(r) => r,
-    Err(e) => {
-      set_reqwest_error(&stats, &e);
-      anyhow::bail!(e);
-    }
-  };
-  if resp.status().is_client_error() || resp.status().is_server_error() {
-    set_http_error(&stats, resp.status().as_u16(), None);
-    anyhow::bail!("http {}", resp.status().as_u16());
-  }
-
   let file = OpenOptions::new().write(true).open(temp_path)?;
   let mut offset = start as u64;
   let mut bytes_total = start;
 
-  let mut stream = resp.bytes_stream();
   let mut persist_tick = tokio::time::interval(Duration::from_secs(1));
   persist_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+  let mut last_progress = Instant::now();
 
   loop {
-    tokio::select! {
-      _ = persist_tick.tick() => {
-        db.update_download_bytes(download_id, bytes_total)?;
+    // (Re)issue request from current offset.
+    let mut headers = HeaderMap::new();
+    Transport::apply_header_rules(rules, &mut headers, url);
+    if bytes_total > 0 && supports_ranges {
+      headers.insert(
+        RANGE,
+        HeaderValue::from_str(&format!("bytes={bytes_total}-")).unwrap(),
+      );
+    }
+
+    let resp = client.get(url.clone()).headers(headers).send().await;
+    let resp = match resp {
+      Ok(r) => r,
+      Err(e) => {
+        set_reqwest_error(&stats, &e);
+        anyhow::bail!(e);
       }
-      maybe = stream.next() => {
-        let Some(chunk) = maybe else { break; };
-        let chunk = chunk?;
-        if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+    };
+    if resp.status().is_client_error() || resp.status().is_server_error() {
+      set_http_error(&stats, resp.status().as_u16(), None);
+      anyhow::bail!("http {}", resp.status().as_u16());
+    }
+
+    let mut stream = resp.bytes_stream();
+
+    loop {
+      let stall_deadline = last_progress + stall_timeout;
+      tokio::select! {
+        _ = persist_tick.tick() => {
           db.update_download_bytes(download_id, bytes_total)?;
-          db.update_download_status(download_id, DownloadStatus::Paused, None, None)?;
-          *stats.status.lock() = DownloadStatus::Paused;
-          return Ok(());
         }
-        limiter.acquire(chunk.len()).await;
-        write_at_all(&file, offset, &chunk)?;
-        offset += chunk.len() as u64;
-        bytes_total += chunk.len() as i64;
-        stats.bytes.store(bytes_total, Ordering::Relaxed);
+        _ = control_rx.changed() => {
+          if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+            db.update_download_bytes(download_id, bytes_total)?;
+            db.update_download_status(download_id, DownloadStatus::Paused, None, None)?;
+            *stats.status.lock() = DownloadStatus::Paused;
+            return Ok(());
+          }
+        }
+        _ = tokio::time::sleep_until(stall_deadline) => {
+          // No bytes for a while => backoff + retry.
+          let delay_ms = compute_backoff_delay_ms(stall_attempt);
+          stall_attempt = stall_attempt.saturating_add(1);
+          let until_ms = now_unix_ms() + delay_ms as i64;
+          stats.backoff_until_ms.store(until_ms, Ordering::Relaxed);
+          *stats.status_detail.lock() = Some("Stalled (possible rate limit). Retrying…".to_string());
+          // Sleep, but allow pause/cancel.
+          tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => {}
+            _ = control_rx.changed() => {
+              if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+                db.update_download_bytes(download_id, bytes_total)?;
+                db.update_download_status(download_id, DownloadStatus::Paused, None, None)?;
+                *stats.status.lock() = DownloadStatus::Paused;
+                return Ok(());
+              }
+            }
+          }
+          stats.backoff_until_ms.store(0, Ordering::Relaxed);
+          // Break inner loop to re-issue the request.
+          break;
+        }
+        maybe = stream.next() => {
+          let Some(chunk) = maybe else {
+            // End of stream: persist final bytes and do basic sanity.
+            db.update_download_bytes(download_id, bytes_total)?;
+            if let Some(len) = content_length {
+              if bytes_total != len {
+                tracing::warn!(download_id=%download_id, bytes_total, len, "single download length mismatch");
+              }
+            }
+            return Ok(());
+          };
+          let chunk = match chunk {
+            Ok(c) => c,
+            Err(e) => {
+              // Treat decode/body errors as transient (servers sometimes drop connections under rate limit).
+              tracing::warn!(download_id=%download_id, error=%e, "single stream read failed; retrying");
+              let delay_ms = compute_backoff_delay_ms(stall_attempt);
+              stall_attempt = stall_attempt.saturating_add(1);
+              let until_ms = now_unix_ms() + delay_ms as i64;
+              stats.backoff_until_ms.store(until_ms, Ordering::Relaxed);
+              *stats.status_detail.lock() = Some("Connection dropped. Retrying…".to_string());
+              tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+              stats.backoff_until_ms.store(0, Ordering::Relaxed);
+              break;
+            }
+          };
+          last_progress = Instant::now();
+          stats.backoff_until_ms.store(0, Ordering::Relaxed);
+          *stats.status_detail.lock() = None;
+          stall_attempt = 0; // successful progress resets backoff
+          if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+            db.update_download_bytes(download_id, bytes_total)?;
+            db.update_download_status(download_id, DownloadStatus::Paused, None, None)?;
+            *stats.status.lock() = DownloadStatus::Paused;
+            return Ok(());
+          }
+          limiter.acquire(chunk.len()).await;
+          write_at_all(&file, offset, &chunk)?;
+          offset += chunk.len() as u64;
+          bytes_total += chunk.len() as i64;
+          stats.bytes.store(bytes_total, Ordering::Relaxed);
+        }
       }
     }
   }
 
-  db.update_download_bytes(download_id, bytes_total)?;
-  // content_length sanity when known
-  if let Some(len) = content_length {
-    if bytes_total != len {
-      tracing::warn!(download_id=%download_id, bytes_total, len, "single download length mismatch");
-    }
-  }
-  Ok(())
+  // unreachable
 }
 
 async fn download_multipart(
@@ -685,69 +778,134 @@ async fn download_segment(
     return Ok(());
   }
 
-  let mut headers = HeaderMap::new();
-  Transport::apply_header_rules(rules, &mut headers, url);
-
-  let start = seg.range_start + seg.bytes_done;
-  if start > seg.range_end {
-    db.update_segment_bytes(seg.id, seg.bytes_done, "COMPLETED", None)?;
-    return Ok(());
-  }
-  headers.insert(
-    RANGE,
-    HeaderValue::from_str(&format!("bytes={start}-{}", seg.range_end)).unwrap(),
-  );
-
-  let resp = client.get(url.clone()).headers(headers).send().await;
-  let resp = match resp {
-    Ok(r) => r,
-    Err(e) => {
-      set_reqwest_error(&stats, &e);
-      db.update_segment_bytes(seg.id, seg.bytes_done, "ERROR", Some(&e.to_string()))?;
-      anyhow::bail!(e);
-    }
-  };
-
-  if resp.status().as_u16() != 206 {
-    // Range not supported or server downgraded. We treat as retryable: engine can fall back to single on retry.
-    *stats.error_code.lock() = Some(ErrorCode::RangeUnsupported);
-    *stats.error_message.lock() = Some("Server does not support ranged requests".to_string());
-    db.update_segment_bytes(seg.id, seg.bytes_done, "ERROR", Some("range unsupported"))?;
-    anyhow::bail!("range unsupported");
-  }
+  // Similar to single stream: if a segment receives no bytes for a while, treat it as a stall
+  // and retry with exponential backoff from the current offset.
+  let stall_timeout = Duration::from_secs(20);
+  let max_retries: usize = 10;
+  let mut stall_attempt: usize = 0;
+  let mut last_progress = Instant::now();
 
   let file = OpenOptions::new().write(true).open(temp_path)?;
-  let mut offset = start as u64;
   let mut bytes_done = seg.bytes_done;
 
-  let mut stream = resp.bytes_stream();
   let mut persist_tick = tokio::time::interval(Duration::from_secs(1));
   persist_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
   loop {
-    tokio::select! {
-      _ = persist_tick.tick() => {
-        db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
-      }
-      maybe = stream.next() => {
-        let Some(chunk) = maybe else { break; };
-        let chunk = chunk?;
-        if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
-          db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
-          return Ok(());
+    if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+      db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
+      return Ok(());
+    }
+
+    let start = seg.range_start + bytes_done;
+    if start > seg.range_end {
+      db.update_segment_bytes(seg.id, bytes_done, "COMPLETED", None)?;
+      return Ok(());
+    }
+
+    let mut headers = HeaderMap::new();
+    Transport::apply_header_rules(rules, &mut headers, url);
+    headers.insert(
+      RANGE,
+      HeaderValue::from_str(&format!("bytes={start}-{}", seg.range_end)).unwrap(),
+    );
+
+    let resp = match client.get(url.clone()).headers(headers).send().await {
+      Ok(r) => r,
+      Err(e) => {
+        tracing::warn!(segment_id=%seg.id, error=%e, "segment request failed; retrying");
+        if stall_attempt >= max_retries {
+          set_reqwest_error(&stats, &e);
+          db.update_segment_bytes(seg.id, bytes_done, "ERROR", Some(&e.to_string()))?;
+          anyhow::bail!(e);
         }
-        limiter.acquire(chunk.len()).await;
-        write_at_all(&file, offset, &chunk)?;
-        offset += chunk.len() as u64;
-        bytes_done += chunk.len() as i64;
-        db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None).ok();
-        total_bytes.fetch_add(chunk.len() as i64, Ordering::Relaxed);
+        let delay_ms = compute_backoff_delay_ms(stall_attempt);
+        stall_attempt = stall_attempt.saturating_add(1);
+        let until_ms = now_unix_ms() + delay_ms as i64;
+        stats.backoff_until_ms.store(until_ms, Ordering::Relaxed);
+        *stats.status_detail.lock() = Some("Retrying stalled segment…".to_string());
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        stats.backoff_until_ms.store(0, Ordering::Relaxed);
+        continue;
+      }
+    };
+
+    if resp.status().as_u16() != 206 {
+      // Range not supported or server downgraded. Let caller downgrade.
+      *stats.error_code.lock() = Some(ErrorCode::RangeUnsupported);
+      *stats.error_message.lock() = Some("Server does not support ranged requests".to_string());
+      db.update_segment_bytes(seg.id, bytes_done, "ERROR", Some("range unsupported"))?;
+      anyhow::bail!("range unsupported");
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut offset = start as u64;
+
+    loop {
+      let stall_deadline = last_progress + stall_timeout;
+      tokio::select! {
+        _ = persist_tick.tick() => {
+          db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
+        }
+        _ = control_rx.changed() => {
+          if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+            db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
+            return Ok(());
+          }
+        }
+        _ = tokio::time::sleep_until(stall_deadline) => {
+          if stall_attempt >= max_retries {
+            db.update_segment_bytes(seg.id, bytes_done, "ERROR", Some("segment stalled (max retries)"))?;
+            anyhow::bail!("segment stalled");
+          }
+          let delay_ms = compute_backoff_delay_ms(stall_attempt);
+          stall_attempt = stall_attempt.saturating_add(1);
+          let until_ms = now_unix_ms() + delay_ms as i64;
+          stats.backoff_until_ms.store(until_ms, Ordering::Relaxed);
+          *stats.status_detail.lock() = Some("Stalled (possible rate limit). Retrying…".to_string());
+          tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+          stats.backoff_until_ms.store(0, Ordering::Relaxed);
+          // Break inner loop to re-issue the request at the next outer iteration.
+          break;
+        }
+        maybe = stream.next() => {
+          let Some(chunk) = maybe else {
+            // Stream ended. If we're not done, treat as transient and retry.
+            let expected = seg.range_end - seg.range_start + 1;
+            if bytes_done >= expected {
+              db.update_segment_bytes(seg.id, bytes_done, "COMPLETED", None)?;
+              return Ok(());
+            }
+            break;
+          };
+
+          let chunk = match chunk {
+            Ok(c) => c,
+            Err(e) => {
+              tracing::warn!(segment_id=%seg.id, error=%e, "segment read failed; retrying");
+              break;
+            }
+          };
+
+          last_progress = Instant::now();
+          stats.backoff_until_ms.store(0, Ordering::Relaxed);
+          *stats.status_detail.lock() = None;
+          stall_attempt = 0;
+
+          if matches!(*control_rx.borrow(), JobControl::Pause | JobControl::Cancel) {
+            db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None)?;
+            return Ok(());
+          }
+          limiter.acquire(chunk.len()).await;
+          write_at_all(&file, offset, &chunk)?;
+          offset += chunk.len() as u64;
+          bytes_done += chunk.len() as i64;
+          db.update_segment_bytes(seg.id, bytes_done, "ACTIVE", None).ok();
+          total_bytes.fetch_add(chunk.len() as i64, Ordering::Relaxed);
+        }
       }
     }
   }
-
-  db.update_segment_bytes(seg.id, bytes_done, "COMPLETED", None)?;
-  Ok(())
 }
 
 fn set_http_error(stats: &RuntimeStats, status: u16, body: Option<String>) {

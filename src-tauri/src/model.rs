@@ -44,6 +44,8 @@ pub struct DownloadProgressUpdate {
   pub content_length: Option<i64>,
   pub speed_bps: f64,
   pub eta_seconds: Option<f64>,
+  #[serde(default)]
+  pub status_detail: Option<String>,
   pub error_code: Option<ErrorCode>,
   pub error_message: Option<String>,
   pub updated_at: String,
