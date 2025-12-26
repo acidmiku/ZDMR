@@ -1,3 +1,9 @@
+## v0.1.5 (2025-12-26)
+
+### Added
+- Automatic stall recovery: if a download sits at 0 B/s, Z-DMR retries with exponential backoff.
+- Clear UI messaging during backoff (e.g. **“Retrying in 8s”**).
+
 ## v0.1.4 (2025-12-25)
 
 ### Added
